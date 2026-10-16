@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spectrum Viewer</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#14181d; --line:#232a32; --text:#e6edf3; --dim:#8b97a6;
+    --accent:#4fb8ff; --warn:#ffb454; --ok:#5ed6a0;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  :root{--sidebar-w:260px;--psd-h:168px}
+  #app{display:grid;grid-template-columns:var(--sidebar-w) 6px 1fr;height:100vh;overflow:hidden}
+  #app.collapsed{grid-template-columns:0 6px 1fr}
+  aside{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;overflow-x:hidden;padding:14px}
+  #app.collapsed aside{padding:0;border:0}
+  /* Splitters. The vertical one sizes the sidebar, the horizontal one the spectrum panel. */
+  .split{background:var(--line);position:relative;z-index:5}
+  .split:hover,.split.active{background:var(--accent)}
+  #splitV{cursor:col-resize}
+  #splitH{height:6px;cursor:row-resize;flex:0 0 6px}
+  #splitV::after,#splitH::after{content:"";position:absolute;inset:-3px;}
+  main{display:flex;flex-direction:column;min-width:0}
+  h1{font-size:14px;margin:0 0 2px;letter-spacing:.3px}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin:16px 0 7px;font-weight:600}
+  .sub{color:var(--dim);font-size:11px;margin-bottom:10px}
+  label{display:block;margin:8px 0 3px;color:var(--dim);font-size:11px}
+  select,input[type=number]{width:100%;background:#0b0e12;color:var(--text);border:1px solid var(--line);
+    border-radius:5px;padding:5px 6px;font:12px var(--mono)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .row{display:flex;gap:6px}.row>*{flex:1;min-width:0}
+  button{background:#1d242c;color:var(--text);border:1px solid var(--line);border-radius:5px;
+    padding:6px 9px;cursor:pointer;font-size:12px}
+  button:hover{background:#263039;border-color:#33404d}
+  button.on{background:var(--accent);color:#04121c;border-color:var(--accent);font-weight:600}
+  .chk{display:flex;align-items:center;gap:7px;margin:5px 0;color:var(--text);font-size:12px;cursor:pointer}
+  .chk input{accent-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font:11px var(--mono)}
+  td{padding:1px 0;color:var(--dim)}td+td{text-align:right;color:var(--text)}
+  #plots{flex:1;display:flex;flex-direction:column;min-height:0;position:relative}
+  .wrap{position:relative;min-height:0}
+  #wfWrap{flex:1}
+  #psdWrap{height:var(--psd-h);flex:0 0 var(--psd-h);border-top:1px solid var(--line)}
+  canvas{display:block;width:100%;height:100%}
+  #overlay{position:absolute;inset:0;pointer-events:none}
+  #axis{height:26px;border-top:1px solid var(--line);background:var(--panel)}
+  #bar{display:flex;gap:16px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--line);
+    background:var(--panel);font:11px var(--mono);flex-wrap:wrap}
+  #bar b{color:var(--accent);font-weight:600}
+  .pill{padding:1px 7px;border:1px solid var(--line);border-radius:10px;color:var(--dim)}
+  .pill.ok{color:var(--ok);border-color:#24503e}.pill.warn{color:var(--warn);border-color:#4d3c22}
+  #tip{position:absolute;background:#0b0e12ee;border:1px solid var(--line);border-radius:5px;padding:5px 8px;
+    font:11px var(--mono);pointer-events:none;display:none;white-space:pre;z-index:9;max-width:320px}
+  .legend{display:flex;flex-wrap:wrap;gap:5px 9px;font-size:10px;color:var(--dim);margin-top:5px}
+  .legend i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:3px;vertical-align:-1px}
+  .note{color:var(--dim);font-size:10px;margin-top:5px;line-height:1.4}
+  #collapse{position:absolute;top:6px;right:8px;z-index:8;padding:3px 8px;font-size:11px;opacity:.6}
+  #collapse:hover{opacity:1}
+  @media (max-width:860px){
+    :root{--sidebar-w:0px}
+    #app{grid-template-columns:0 6px 1fr}
+    #bar{font-size:10px;gap:9px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1>Spectrum Viewer</h1>
+    <div class="sub" id="banner">connecting…</div>
+
+    <h2>Band</h2>
+    <label>Named band</label>
+    <select id="band"></select>
+    <div class="row">
+      <div><label>Tune (MHz)</label><input type="number" id="tune_mhz" step="0.25"></div>
+      <div><label>Decimation</label><select id="decimation">
+        <option value="1">1 — 200 MS/s</option><option value="2">2 — 100 MS/s</option>
+        <option value="4">4 — 50 MS/s</option><option value="8">8 — 25 MS/s</option>
+      </select></div>
+    </div>
+
+    <h2>Environment</h2>
+    <label>Clutter</label><select id="clutter"></select>
+    <div class="row">
+      <div><label>Hour</label><input type="number" id="hour_of_day" min="0" max="23.5" step="0.5"></div>
+      <div><label>Seed</label><input type="number" id="seed" step="1"></div>
+    </div>
+
+    <h2>Receiver</h2>
+    <label>Gain <span id="gainVal" class="pill"></span></label>
+    <input type="range" id="gain_db" min="0" max="31.5" step="0.5">
+    <label>LO offset (MHz) <span id="loVal" class="pill"></span></label>
+    <input type="range" id="lo_offset_mhz" min="-30" max="30" step="1">
+    <label>Image rejection (dB)</label>
+    <input type="range" id="image_rejection_db" min="20" max="80" step="1">
+    <label>Residual DC (dBFS) <span id="dcVal" class="pill"></span></label>
+    <input type="range" id="dc_spur_dbfs" min="-110" max="-55" step="1">
+
+    <h2>Display</h2>
+    <div class="row">
+      <div><label>FFT</label><select id="nfft">
+        <option>256</option><option>512</option><option>1024</option><option>2048</option><option>4096</option>
+      </select></div>
+      <div><label>ms / row <span class="pill" id="rowVal"></span></label><select id="row_ms">
+        <option value="0.05">0.05</option><option value="0.1">0.1</option><option value="0.25">0.25</option>
+        <option value="0.5">0.5</option><option value="1">1</option><option value="2">2</option>
+      </select></div>
+    </div>
+    <label>Colour map</label><select id="cmap">
+      <option value="turbo">turbo</option><option value="viridis">viridis</option>
+      <option value="inferno">inferno</option><option value="grey">grey</option>
+    </select>
+    <label>Floor / ceiling (dBm per bin) <span class="pill" id="rangeVal"></span></label>
+    <input type="range" id="dbFloor" min="-160" max="-60" step="1">
+    <input type="range" id="dbCeil" min="-120" max="-20" step="1">
+    <label class="chk"><input type="checkbox" id="showTruth" checked> Truth overlay</label>
+    <label class="chk"><input type="checkbox" id="showChan" checked> Channel plan</label>
+    <label class="chk"><input type="checkbox" id="showPeak" checked> Peak hold</label>
+    <div class="row" style="margin-top:9px">
+      <button id="pause">Pause</button><button id="resetPeak">Reset peak</button>
+    </div>
+
+    <h2>Population</h2>
+    <table id="counts"></table>
+    <div class="legend" id="legend"></div>
+
+    <h2>Status</h2>
+    <table id="stats"></table>
+    <div class="note" id="notes"></div>
+  </aside>
+
+  <div class="split" id="splitV"></div>
+
+  <main>
+    <button id="collapse" title="Show or hide the controls (press C)">&#9776;</button>
+    <div id="bar"></div>
+    <div id="plots">
+      <div class="wrap" id="wfWrap"><canvas id="wf"></canvas><canvas id="overlay"></canvas></div>
+      <div class="split" id="splitH" title="Drag to resize the spectrum panel"></div>
+      <div class="wrap" id="psdWrap"><canvas id="psd"></canvas></div>
+      <canvas id="axis"></canvas>
+      <div id="tip"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+// ---------- colour maps: control points interpolated into a 256-entry LUT ----------
+const MAPS = {
+  turbo:  [[48,18,59],[70,107,227],[36,180,199],[96,221,96],[209,217,54],[253,149,45],[224,62,17],[122,4,3]],
+  viridis:[[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]],
+  inferno:[[0,0,4],[31,12,72],[85,15,109],[136,34,106],[186,54,85],[227,89,51],[249,140,10],[249,201,50],[252,255,164]],
+  grey:   [[0,0,0],[255,255,255]],
+};
+function buildLut(name){
+  const pts = MAPS[name] || MAPS.turbo, lut = new Uint8ClampedArray(256*4);
+  for(let i=0;i<256;i++){
+    const x = i/255*(pts.length-1), k = Math.min(Math.floor(x), pts.length-2), f = x-k;
+    for(let c=0;c<3;c++) lut[i*4+c] = pts[k][c] + f*(pts[k+1][c]-pts[k][c]);
+    lut[i*4+3] = 255;
+  }
+  return lut;
+}
+
+// ---------- state ----------
+const S = {
+  cfg:null, lut:buildLut("turbo"), seq:-1, rows:[], maxRows:1600,
+  truth:[], truthSeen:new Set(), psd:null, peak:null, showTruth:true, showChan:true, showPeak:true,
+  dbFloor:-140, dbCeil:-40, srvFloor:-140, srvCeil:-40, busy:false, hover:null,
+};
+const $ = id => document.getElementById(id);
+const wf = $("wf"), wfCtx = wf.getContext("2d", {alpha:false});
+const ov = $("overlay"), ovCtx = ov.getContext("2d");
+const psd = $("psd"), psdCtx = psd.getContext("2d", {alpha:false});
+const axis = $("axis"), axCtx = axis.getContext("2d", {alpha:false});
+let wfImage = null;   // offscreen waterfall bitmap, scrolled by blitting
+
+function fit(c){
+  const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  c.width = Math.max(1, Math.round(r.width*d)); c.height = Math.max(1, Math.round(r.height*d));
+  return d;
+}
+function fitAll(){
+  [wf,ov,psd,axis].forEach(fit);
+  // One waterfall row is one device pixel, so the history has to be at least as tall as the canvas or the
+  // top of the waterfall can never fill in. On a HiDPI screen that is devicePixelRatio times the CSS height.
+  S.maxRows = Math.max(1600, wf.height + 256);
+  drawAll();
+}
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(fitAll, 80);   // coalesce the burst of events a window drag produces
+});
+
+// ---------- data ----------
+async function getConfig(){
+  S.cfg = await (await fetch("/api/config")).json();
+  S.srvFloor = S.cfg.db_floor; S.srvCeil = S.cfg.db_ceil;
+  if(!S.inited){ initControls(); S.inited = true; }
+  renderSidebar();
+}
+async function poll(){
+  if(S.busy) return; S.busy = true;
+  try{
+    const r = await fetch(`/api/rows?since=${S.seq}&limit=512`);
+    const buf = await r.arrayBuffer();
+    if(buf.byteLength >= 4){
+      const dv = new DataView(buf), hlen = dv.getUint32(0, true);
+      const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hlen)));
+      const bins = head.n_bins, data = new Uint8Array(buf, 4+hlen);
+      if(head.count > 0){
+        for(let i=0;i<head.count;i++) S.rows.push(data.subarray(i*bins, (i+1)*bins));
+        while(S.rows.length > S.maxRows) S.rows.shift();
+        S.seq = head.first + head.count;
+        S.rowBins = bins;
+        // Truth arrives per poll, but the waterfall holds a much longer history, so accumulate it and trim
+        // to the span the waterfall actually shows. Keyed so overlapping polls do not double up.
+        const rowS = S.cfg.row_ms/1000;
+        const tOldest = Math.max(0, (S.seq - S.rows.length) * rowS);
+        for(const b of (head.truth || [])){
+          const key = `${b.tech}|${b.t}|${b.f}|${b.kind}`;
+          if(!S.truthSeen.has(key)){ S.truthSeen.add(key); S.truth.push(b); }
+        }
+        if(S.truth.length){
+          S.truth = S.truth.filter(b => b.t + b.d >= tOldest);
+          if(S.truthSeen.size > 40000){            // periodic compaction of the dedup set
+            S.truthSeen = new Set(S.truth.map(b => `${b.tech}|${b.t}|${b.f}|${b.kind}`));
+          }
+        }
+      }
+    }
+    const sp = await (await fetch("/api/spectrum")).json();
+    if(sp.psd && sp.psd.length){ S.psd = sp.psd; S.peak = sp.peak; }
+    const st = await (await fetch("/api/stats")).json();
+    renderBar(st); renderStats(st);
+    drawAll();
+  }catch(e){ $("banner").textContent = "disconnected — " + e.message; }
+  finally{ S.busy = false; }
+}
+
+// ---------- drawing ----------
+function drawAll(){ drawWaterfall(); drawPsd(); drawAxis(); drawOverlay(); }
+
+function drawWaterfall(){
+  if(!S.rows.length || !S.rowBins) return;
+  const W = wf.width, H = wf.height, bins = S.rowBins;
+  // Render the newest H rows into an offscreen bitmap at native bin resolution, then scale to the canvas.
+  if(!wfImage || wfImage.width !== bins || wfImage.height !== H){
+    wfImage = wfCtx.createImageData(bins, H);
+  }
+  const px = wfImage.data, lut = S.lut;
+  // Re-map the server's byte scale (srvFloor..srvCeil) onto the user's floor..ceil window.
+  const a = (S.srvCeil - S.srvFloor)/255, lo = S.dbFloor, span = Math.max(S.dbCeil - S.dbFloor, 0.1);
+  const n = Math.min(H, S.rows.length);
+  const top = H - n;                       // the newest row is always the bottom one
+  if(top > 0) px.fill(0, 0, top*bins*4);   // not yet filled: blank above, never below
+  for(let y=0;y<n;y++){
+    const row = S.rows[S.rows.length - n + y];   // oldest first, so the newest lands at y = H-1
+    let o = (top + y)*bins*4;
+    for(let x=0;x<bins;x++){
+      const db = S.srvFloor + row[x]*a;
+      let v = (db - lo)/span*255; v = v<0?0:(v>255?255:v);
+      const k = (v|0)*4;
+      px[o++] = lut[k]; px[o++] = lut[k+1]; px[o++] = lut[k+2]; px[o++] = 255;
+    }
+  }
+  // Blit through a bitmap so the browser scales bins -> canvas width.
+  wfCtx.imageSmoothingEnabled = false;
+  createImageBitmap(wfImage).then(bm => {
+    wfCtx.drawImage(bm, 0, 0, bins, H, 0, 0, W, H);
+    drawOverlay();
+  });
+}
+
+function x4f(mhz){  // MHz -> canvas x
+  const c = S.cfg; return (mhz - c.f_low_mhz)/(c.f_high_mhz - c.f_low_mhz);
+}
+
+function drawOverlay(){
+  const W = ov.width, H = ov.height, c = S.cfg; if(!c) return;
+  ovCtx.clearRect(0,0,W,H);
+  const d = window.devicePixelRatio || 1;
+
+  if(S.showChan && c.markers){
+    ovCtx.lineWidth = 1*d; ovCtx.font = `${10*d}px ui-monospace,monospace`;
+    const colors = techColors();
+    c.markers.forEach(m => {
+      ovCtx.strokeStyle = colors[m.tech] || "#4fb8ff55";
+      m.centers_mhz.forEach(f => {
+        const x = x4f(f)*W;
+        ovCtx.globalAlpha = .34; ovCtx.beginPath();
+        ovCtx.moveTo(x, 0); ovCtx.lineTo(x, H); ovCtx.stroke();
+      });
+    });
+    ovCtx.globalAlpha = 1;
+  }
+
+  // DC spur marker: it cannot be escaped at 100 MS/s, so show where it is.
+  if(c.dc_spur_mhz >= c.f_low_mhz && c.dc_spur_mhz <= c.f_high_mhz){
+    const x = x4f(c.dc_spur_mhz)*W;
+    ovCtx.strokeStyle = "#ffb454"; ovCtx.globalAlpha = .55; ovCtx.lineWidth = 1*d;
+    ovCtx.setLineDash([4*d,4*d]); ovCtx.beginPath();
+    ovCtx.moveTo(x,0); ovCtx.lineTo(x,H); ovCtx.stroke();
+    ovCtx.setLineDash([]); ovCtx.globalAlpha = 1;
+  }
+
+  if(S.showTruth && S.truth.length && S.rows.length){
+    // The waterfall draws the newest `nRows` rows, oldest at the top; truth goes on exactly that axis.
+    // Same geometry as the waterfall: one row is one device pixel and the newest row is the bottom one, so
+    // a time maps to y = H - (tNew - t)/rowS. This holds whether or not the history has filled the canvas.
+    const rowS = c.row_ms/1000, nRows = Math.min(H, S.rows.length);
+    const tNew = S.seq*rowS, tOld = tNew - nRows*rowS;
+    const colors = techColors();
+    const inWin = [];
+    for(const b of S.truth) if(b.t + b.d >= tOld && b.t <= tNew) inWin.push(b);
+
+    // An urban-dense 2.4 GHz band really is ~85% occupied, so at a wide time span there are thousands of
+    // overlapping bursts and outlining each one paints a solid block. Above a threshold, fall back to
+    // translucent fills, which read as occupancy density instead of hiding the waterfall underneath.
+    const dense = inWin.length > 1200;
+    ovCtx.lineWidth = d;
+    const yOf = t => H - (tNew - t)/rowS;
+    // Newest last, so if anything is dropped it is the oldest, off the top edge.
+    const take = dense ? inWin.slice(-6000) : inWin;
+    ovCtx.save();
+    ovCtx.beginPath(); ovCtx.rect(0, H - nRows, W, nRows); ovCtx.clip();
+    for(const b of take){
+      const y0 = yOf(b.t), y1 = yOf(b.t + b.d);
+      const xa = x4f(b.f - b.bw/2)*W, xb = x4f(b.f + b.bw/2)*W;
+      const w = Math.max(xb - xa, d), h = Math.max(y1 - y0, d);
+      const col = colors[b.tech] || "#ffffff";
+      if(dense){
+        ovCtx.globalAlpha = .13; ovCtx.fillStyle = col; ovCtx.fillRect(xa, y0, w, h);
+      }else{
+        ovCtx.globalAlpha = .85; ovCtx.strokeStyle = col; ovCtx.strokeRect(xa, y0, w, h);
+      }
+    }
+    ovCtx.restore();
+    ovCtx.globalAlpha = 1;
+    S.truthShown = take.length;
+    S.truthDense = dense;
+  } else { S.truthShown = 0; S.truthDense = false; }
+
+  if(S.hover){
+    ovCtx.strokeStyle = "#ffffff66"; ovCtx.lineWidth = 1*d;
+    ovCtx.beginPath(); ovCtx.moveTo(S.hover.x*d, 0); ovCtx.lineTo(S.hover.x*d, H); ovCtx.stroke();
+  }
+}
+
+function drawPsd(){
+  const W = psd.width, H = psd.height, c = S.cfg; if(!c || !S.psd) return;
+  const d = window.devicePixelRatio || 1;
+  psdCtx.fillStyle = "#0b0d10"; psdCtx.fillRect(0,0,W,H);
+  const lo = S.dbFloor, hi = S.dbCeil, y4 = v => H - (v-lo)/(hi-lo)*H;
+
+  // grid every 20 dB
+  psdCtx.strokeStyle = "#232a32"; psdCtx.lineWidth = 1*d;
+  psdCtx.font = `${10*d}px ui-monospace,monospace`; psdCtx.fillStyle = "#8b97a6";
+  for(let v = Math.ceil(lo/20)*20; v <= hi; v += 20){
+    const y = y4(v); psdCtx.beginPath(); psdCtx.moveTo(0,y); psdCtx.lineTo(W,y); psdCtx.stroke();
+    psdCtx.fillText(`${v}`, 3*d, y - 2*d);
+  }
+  // thermal noise floor per bin
+  const yn = y4(c.noise_per_bin_dbm);
+  psdCtx.strokeStyle = "#5ed6a077"; psdCtx.setLineDash([5*d,4*d]); psdCtx.beginPath();
+  psdCtx.moveTo(0,yn); psdCtx.lineTo(W,yn); psdCtx.stroke(); psdCtx.setLineDash([]);
+  psdCtx.fillStyle = "#5ed6a0"; psdCtx.fillText("kTB+NF", W-52*d, yn-3*d);
+
+  const plot = (arr, stroke, fill) => {
+    psdCtx.beginPath();
+    for(let i=0;i<arr.length;i++){
+      const x = i/(arr.length-1)*W, y = y4(arr[i]);
+      i ? psdCtx.lineTo(x,y) : psdCtx.moveTo(x,y);
+    }
+    if(fill){
+      psdCtx.lineTo(W,H); psdCtx.lineTo(0,H); psdCtx.closePath();
+      psdCtx.fillStyle = fill; psdCtx.fill();
+    }else{ psdCtx.strokeStyle = stroke; psdCtx.lineWidth = 1*d; psdCtx.stroke(); }
+  };
+  if(S.showPeak && S.peak) plot(S.peak, "#ffb45488", null);
+  plot(S.psd, null, "#4fb8ff33");
+  plot(S.psd, "#4fb8ff", null);
+}
+
+function drawAxis(){
+  const W = axis.width, H = axis.height, c = S.cfg; if(!c) return;
+  const d = window.devicePixelRatio || 1;
+  axCtx.fillStyle = "#14181d"; axCtx.fillRect(0,0,W,H);
+  axCtx.fillStyle = "#8b97a6"; axCtx.strokeStyle = "#323b45";
+  axCtx.font = `${10*d}px ui-monospace,monospace`; axCtx.textAlign = "center"; axCtx.lineWidth = 1*d;
+  const span = c.f_high_mhz - c.f_low_mhz;
+  const step = span > 150 ? 25 : span > 60 ? 10 : span > 25 ? 5 : 2;
+  const first = Math.ceil(c.f_low_mhz/step)*step;
+  for(let f = first; f <= c.f_high_mhz; f += step){
+    const x = x4f(f)*W;
+    axCtx.beginPath(); axCtx.moveTo(x,0); axCtx.lineTo(x,5*d); axCtx.stroke();
+    axCtx.fillText(f.toFixed(0), x, 16*d);
+  }
+}
+
+function techColors(){
+  return {
+    wifi_2_4:"#4fb8ff", bluetooth_le:"#5ed6a0", bluetooth_br_edr:"#b58cff",
+    zigbee_2_4:"#ffb454", microwave_oven:"#ff5d5d", "3gpp_band_53":"#ff8ad8",
+    amateur:"#8be9fd", mss_lband_iridium_globalstar_inmarsat:"#aaaaaa",
+  };
+}
+
+// ---------- sidebar / bar ----------
+function renderBar(st){
+  const c = S.cfg; if(!c) return;
+  const ratio = st.realtime_ratio;
+  const cls = ratio >= 0.9 ? "ok" : "warn";
+  $("bar").innerHTML = `
+    <span><b>${c.f_low_mhz.toFixed(2)}–${c.f_high_mhz.toFixed(2)} MHz</b></span>
+    <span>tuned <b>${c.tune_mhz.toFixed(3)}</b> MHz</span>
+    <span>${c.sample_rate_msps.toFixed(1)} MS/s · decim ${c.receiver.decimation} · MCR ${(c.receiver.master_clock_hz/1e6).toFixed(0)} MHz</span>
+    <span>bin ${c.bin_khz.toFixed(1)} kHz · ${c.row_ms.toFixed(3)} ms/row</span>
+    <span>NF ${c.receiver.noise_figure_db.toFixed(1)} dB · floor ${c.noise_power_dbm.toFixed(1)} dBm</span>
+    <span class="pill ${cls}">stream ${st.stream_time_s.toFixed(2)} s @ ${ratio.toFixed(3)}× real time</span>
+    <span class="pill">${c.device}</span>
+    ${c.dc_spur_escapes_band ? "" : `<span class="pill warn">DC spur @ ${c.dc_spur_mhz.toFixed(2)} MHz, ${c.dc_spur_above_noise_db>=0?"+":""}${c.dc_spur_above_noise_db.toFixed(0)} dB over floor</span>`}`;
+}
+function renderStats(st){
+  const rows = [
+    ["stream time", st.stream_time_s.toFixed(3)+" s"],
+    ["wall time", st.wall_time_s.toFixed(1)+" s"],
+    ["real-time ratio", st.realtime_ratio.toFixed(3)+"×"],
+    ["chunks", st.chunks],
+    ["rows", st.sequence],
+    ["bursts in view", S.truthShown || 0],
+    ["overlay mode", S.truthDense ? "density" : "outline"],
+  ];
+  $("stats").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+}
+function renderSidebar(){
+  const c = S.cfg;
+  $("banner").textContent = `${c.provenance.band_plan.name} · ${Object.values(c.emitter_counts).reduce((a,b)=>a+b,0)} audible emitters`;
+  const colors = techColors();
+  $("counts").innerHTML = Object.entries(c.emitter_counts).sort((a,b)=>b[1]-a[1])
+    .map(([k,v]) => `<tr><td><i style="background:${colors[k]||'#888'};width:8px;height:8px;display:inline-block;border-radius:2px;margin-right:5px"></i>${k}</td><td>${v}</td></tr>`).join("");
+  $("legend").innerHTML = (c.markers||[]).map(m =>
+    `<span><i style="background:${colors[m.tech]||'#888'}"></i>${m.label||m.tech} (${m.centers_mhz.length} ch)</span>`).join("");
+  const notes = [];
+  if(!c.dc_spur_escapes_band)
+    notes.push(`At ${c.sample_rate_msps.toFixed(0)} MS/s the LO spur cannot leave the span (that needs rate ≤ analog BW/2). LO offset is capped at ±${c.max_lo_offset_mhz.toFixed(0)} MHz, so expect a masked DC bin.`);
+  notes.push(`Provisional: ${c.receiver.provisional.join(", ")}.`);
+  $("notes").innerHTML = notes.join("<br><br>");
+}
+
+// ---------- controls ----------
+function initControls(){
+  const c = S.cfg, s = c.settings;
+  $("band").innerHTML = c.bands.map(b=>`<option${b===s.band?" selected":""}>${b}</option>`).join("");
+  $("clutter").innerHTML = c.clutter_classes.map(b=>`<option${b===s.clutter?" selected":""}>${b}</option>`).join("");
+  $("tune_mhz").value = s.tune_mhz; $("decimation").value = s.decimation;
+  $("hour_of_day").value = s.hour_of_day; $("seed").value = s.seed;
+  $("gain_db").value = s.gain_db; $("lo_offset_mhz").value = s.lo_offset_mhz;
+  $("image_rejection_db").value = s.image_rejection_db;
+  $("dc_spur_dbfs").value = s.dc_spur_dbfs;
+  $("nfft").value = s.nfft; $("row_ms").value = s.row_ms;  // the setting, not the realized duration
+  S.dbFloor = c.db_floor; S.dbCeil = c.db_ceil;
+  $("dbFloor").value = S.dbFloor; $("dbCeil").value = S.dbCeil;
+  labels();
+
+  const send = async (patch) => {
+    S.rows = []; S.seq = -1; S.psd = null; S.peak = null; wfImage = null;
+    S.truth = []; S.truthSeen = new Set();
+    const r = await fetch("/api/control", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(patch)});
+    const j = await r.json();
+    if(j.error){ $("banner").textContent = "rejected: " + j.error; return; }
+    S.cfg = j.config; $("lo_offset_mhz").max = j.config.max_lo_offset_mhz;
+    $("lo_offset_mhz").min = -j.config.max_lo_offset_mhz;
+    labels(); renderSidebar(); drawAll();
+  };
+  ["band","clutter"].forEach(id => $(id).onchange = () => send({[id]: $(id).value}));
+  ["tune_mhz","hour_of_day","seed"].forEach(id => $(id).onchange = () => send({[id]: parseFloat($(id).value)}));
+  $("decimation").onchange = () => send({decimation: parseInt($("decimation").value)});
+  $("nfft").onchange = () => send({nfft: parseInt($("nfft").value)});
+  $("row_ms").onchange = () => send({row_ms: parseFloat($("row_ms").value)});
+  ["gain_db","lo_offset_mhz","image_rejection_db","dc_spur_dbfs"].forEach(id => {
+    $(id).oninput = labels;
+    $(id).onchange = () => send({[id]: parseFloat($(id).value)});
+  });
+  $("cmap").onchange = () => { S.lut = buildLut($("cmap").value); drawWaterfall(); };
+  ["dbFloor","dbCeil"].forEach(id => $(id).oninput = () => {
+    S.dbFloor = parseFloat($("dbFloor").value); S.dbCeil = parseFloat($("dbCeil").value);
+    if(S.dbCeil <= S.dbFloor+5) S.dbCeil = S.dbFloor+5;
+    labels(); drawAll();
+  });
+  $("showTruth").onchange = e => { S.showTruth = e.target.checked; drawOverlay(); };
+  $("showChan").onchange  = e => { S.showChan  = e.target.checked; drawOverlay(); };
+  $("showPeak").onchange  = e => { S.showPeak  = e.target.checked; drawPsd(); };
+  $("pause").onclick = async () => {
+    const paused = !S.cfg.settings.paused;
+    await fetch("/api/control", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({paused})});
+    S.cfg.settings.paused = paused;
+    $("pause").textContent = paused ? "Resume" : "Pause";
+    $("pause").classList.toggle("on", paused);
+  };
+  $("resetPeak").onclick = async () => { await fetch("/api/reset_peak", {method:"POST"}); S.peak = null; };
+
+  // hover readout
+  const wrap = $("plots");
+  wrap.addEventListener("mousemove", ev => {
+    const c2 = S.cfg; if(!c2) return;
+    const r = $("wfWrap").getBoundingClientRect();
+    const x = ev.clientX - r.left;
+    const mhz = c2.f_low_mhz + (x/r.width)*(c2.f_high_mhz - c2.f_low_mhz);
+    S.hover = {x};
+    const near = (S.truth||[]).filter(b => Math.abs(b.f - mhz) < b.bw/2 + 0.2)
+      .sort((a,b)=>b.p-a.p).slice(0,4);
+    const tip = $("tip");
+    let txt = `${mhz.toFixed(3)} MHz`;
+    if(S.psd){
+      const i = Math.min(S.psd.length-1, Math.max(0, Math.round(x/r.width*(S.psd.length-1))));
+      txt += `   ${S.psd[i].toFixed(1)} dBm/bin`;
+    }
+    if(near.length) txt += "\n" + near.map(b =>
+      `${b.tech} ${b.kind}  ${b.f.toFixed(3)} MHz  ${b.bw.toFixed(2)} MHz  ${b.p} dBm`).join("\n");
+    tip.textContent = txt;
+    tip.style.display = "block";
+    tip.style.left = Math.min(ev.clientX - wrap.getBoundingClientRect().left + 12, wrap.clientWidth-330) + "px";
+    tip.style.top  = (ev.clientY - wrap.getBoundingClientRect().top + 12) + "px";
+    drawOverlay();
+  });
+  wrap.addEventListener("mouseleave", () => { $("tip").style.display="none"; S.hover=null; drawOverlay(); });
+}
+function labels(){
+  $("gainVal").textContent = (+$("gain_db").value).toFixed(1)+" dB";
+  $("loVal").textContent = (+$("lo_offset_mhz").value).toFixed(0)+" MHz";
+  $("rangeVal").textContent = `${S.dbFloor} … ${S.dbCeil}`;
+  const rv = $("rowVal");
+  // A row is a whole number of FFT frames, so the realized duration is quantized; show it when it differs.
+  if(rv && S.cfg) rv.textContent = `= ${S.cfg.row_ms.toFixed(3)} ms`;
+  const dc = $("dcVal");
+  if(dc) dc.textContent = (+$("dc_spur_dbfs").value).toFixed(0) + " dBFS"
+    + (S.cfg && S.cfg.dc_spur_above_noise_db !== undefined
+       ? `  (${S.cfg.dc_spur_above_noise_db >= 0 ? "+" : ""}${S.cfg.dc_spur_above_noise_db.toFixed(0)} dB over floor)` : "");
+}
+
+// ---------- resizable panels ----------
+// Sizes live in CSS custom properties and are remembered per browser. Everything downstream reads the
+// canvas size at draw time, so a resize needs nothing but a refit.
+function loadSize(key, fallback){
+  try{ const v = localStorage.getItem(key); return v === null ? fallback : parseFloat(v); }
+  catch(e){ return fallback; }
+}
+function saveSize(key, value){ try{ localStorage.setItem(key, String(value)); }catch(e){} }
+
+function initLayout(){
+  const root = document.documentElement, app = $("app");
+  let sidebar = loadSize("spec.sidebar", 260);
+  let psdH    = loadSize("spec.psd", 168);
+  let collapsed = loadSize("spec.collapsed", 0) === 1;
+
+  const clampSidebar = v => Math.max(0, Math.min(v, Math.min(560, window.innerWidth - 320)));
+  const clampPsd = v => Math.max(70, Math.min(v, Math.max(120, window.innerHeight - 220)));
+
+  const apply = () => {
+    sidebar = clampSidebar(sidebar); psdH = clampPsd(psdH);
+    root.style.setProperty("--sidebar-w", sidebar + "px");
+    root.style.setProperty("--psd-h", psdH + "px");
+    app.classList.toggle("collapsed", collapsed);
+    fitAll();
+  };
+
+  const drag = (handle, onMove) => {
+    handle.addEventListener("pointerdown", ev => {
+      ev.preventDefault();
+      handle.setPointerCapture(ev.pointerId);
+      handle.classList.add("active");
+      document.body.style.userSelect = "none";
+      const move = e => { onMove(e); apply(); };
+      const up = e => {
+        handle.releasePointerCapture(ev.pointerId);
+        handle.classList.remove("active");
+        document.body.style.userSelect = "";
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        saveSize("spec.sidebar", sidebar); saveSize("spec.psd", psdH);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
+  };
+  drag($("splitV"), e => { collapsed = false; sidebar = e.clientX; });
+  drag($("splitH"), e => { psdH = window.innerHeight - e.clientY; });
+
+  $("collapse").onclick = () => {
+    collapsed = !collapsed;
+    saveSize("spec.collapsed", collapsed ? 1 : 0);
+    apply();
+  };
+  // Double-clicking a splitter restores its default.
+  $("splitV").ondblclick = () => { sidebar = 260; collapsed = false; apply(); saveSize("spec.sidebar", 260); };
+  $("splitH").ondblclick = () => { psdH = 168; apply(); saveSize("spec.psd", 168); };
+  window.addEventListener("keydown", e => {
+    if(e.key === "c" && !/input|select|textarea/i.test(e.target.tagName)) $("collapse").click();
+  });
+  // A narrow window starts with the controls out of the way.
+  if(window.innerWidth < 860) collapsed = true;
+  apply();
+}
+
+// ---------- go ----------
+(async () => {
+  await getConfig();
+  initLayout();
+  setInterval(poll, 120);
+  poll();
+})();
+</script>
+</body>
+</html>

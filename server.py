@@ -479,7 +479,14 @@ def main() -> None:
         row_ms=args.row_ms,
     )
     Handler.engine = engine
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as exc:
+        engine.stop()
+        raise SystemExit(
+            f"cannot bind {args.host}:{args.port} ({exc}). Another viewer is probably still running: "
+            f"find it with `ss -ltnp | grep {args.port}` and stop it, or pass a different --port."
+        ) from exc
     config = engine.config()
     LOG.info(
         "band %s: %.2f-%.2f MHz at %.1f MS/s, %d audible emitters, FFT on %s",

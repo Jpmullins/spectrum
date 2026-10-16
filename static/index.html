@@ -106,9 +106,10 @@
       <div><label>FFT</label><select id="nfft">
         <option>256</option><option>512</option><option>1024</option><option>2048</option><option>4096</option>
       </select></div>
-      <div><label>ms / row <span class="pill" id="rowVal"></span></label><select id="row_ms">
-        <option value="0.05">0.05</option><option value="0.1">0.1</option><option value="0.25">0.25</option>
-        <option value="0.5">0.5</option><option value="1">1</option><option value="2">2</option>
+      <div><label>ms / row</label><select id="row_ms" title="Requested; the realized duration is a whole number of FFT frames">
+        <option value="0.05">0.05</option><option value="0.1">0.1</option><option value="0.2">0.2</option>
+        <option value="0.25">0.25</option><option value="0.5">0.5</option><option value="1">1</option>
+        <option value="2">2</option>
       </select></div>
     </div>
     <label>Colour map</label><select id="cmap">
@@ -466,7 +467,14 @@ function initControls(){
   $("gain_db").value = s.gain_db; $("lo_offset_mhz").value = s.lo_offset_mhz;
   $("image_rejection_db").value = s.image_rejection_db;
   $("dc_spur_dbfs").value = s.dc_spur_dbfs;
-  $("nfft").value = s.nfft; $("row_ms").value = s.row_ms;  // the setting, not the realized duration
+  $("nfft").value = s.nfft;
+  // The setting, not the realized duration. A value passed on the command line may not be in the list, in
+  // which case add it rather than leaving the control blank.
+  const rowSel = $("row_ms");
+  if(![...rowSel.options].some(o => parseFloat(o.value) === parseFloat(s.row_ms))){
+    rowSel.add(new Option(String(s.row_ms), String(s.row_ms)));
+  }
+  rowSel.value = s.row_ms;
   S.dbFloor = c.db_floor; S.dbCeil = c.db_ceil;
   $("dbFloor").value = S.dbFloor; $("dbCeil").value = S.dbCeil;
   labels();
@@ -540,9 +548,7 @@ function labels(){
   $("gainVal").textContent = (+$("gain_db").value).toFixed(1)+" dB";
   $("loVal").textContent = (+$("lo_offset_mhz").value).toFixed(0)+" MHz";
   $("rangeVal").textContent = `${S.dbFloor} … ${S.dbCeil}`;
-  const rv = $("rowVal");
-  // A row is a whole number of FFT frames, so the realized duration is quantized; show it when it differs.
-  if(rv && S.cfg) rv.textContent = `= ${S.cfg.row_ms.toFixed(3)} ms`;
+  // A row is a whole number of FFT frames, so the realized duration is quantized; the bar reports it.
   const dc = $("dcVal");
   if(dc) dc.textContent = (+$("dc_spur_dbfs").value).toFixed(0) + " dBFS"
     + (S.cfg && S.cfg.dc_spur_above_noise_db !== undefined
